@@ -1,0 +1,3 @@
+[env]
+TELOXIDE_TOKEN = "7654300172:AAFbZmrsfc9lNHIHqx3T6HsNyDpiwWiDcaA"
+RUST_LOG = "info"

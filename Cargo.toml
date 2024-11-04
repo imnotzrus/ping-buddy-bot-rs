@@ -1,0 +1,14 @@
+[package]
+name = "ping-buddy-lib"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "ping-buddy"
+path = "src/main.rs"
+
+[dependencies]
+teloxide = { git = "https://github.com/teloxide/teloxide", branch = "master", features = ["macros", "ctrlc_handler"] }
+tokio = { version = "=1.41.0", default-features = false, features = ["macros", "rt-multi-thread"] }
+pretty_env_logger = "=0.5.0"
+hashbrown = "=0.15.0"
