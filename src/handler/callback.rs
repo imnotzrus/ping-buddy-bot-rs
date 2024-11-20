@@ -2,18 +2,19 @@ use teloxide::payloads::EditMessageReplyMarkupSetters;
 use teloxide::requests::Requester;
 use teloxide::types::CallbackQuery;
 
-use crate::Bot;
-use crate::handler::{NEW_TOPIC, topic_buttons, TOPIC_WRAPPER};
 use crate::handler::helper_messages::{AskTopic, UserSubscribedTopic};
 use crate::handler::message::{ChatIdExtractImpl, UserRefExtractImpl};
+use crate::handler::{topic_buttons, NEW_TOPIC, TOPIC_WRAPPER};
 use crate::storage::Storage;
 use crate::utils::some_rtn_ok;
+use crate::Bot;
+use crate::Result;
 
 pub async fn handle(
   bot: Bot,
   query: CallbackQuery,
   storage: Storage,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+) -> Result {
   bot.answer_callback_query(&query.id).await?;
   let msg = some_rtn_ok!(query.regular_message());
   let user = query.from.user_ref();

@@ -1,3 +1,5 @@
 [env]
-TELOXIDE_TOKEN = "7654300172:AAFbZmrsfc9lNHIHqx3T6HsNyDpiwWiDcaA"
+TELOXIDE_TOKEN = "7654300172:AAGzz6JXmNyzCbBsk-qTsRtJXP_SSM6GLBg"
+INBOUND = "0.0.0.0:5687"
+OUTBOUND = "https://smee.io/XhYNuoibVe0eddww"
 RUST_LOG = "info"

@@ -8,6 +8,7 @@ type Map = HashMap<String, HashSet<String>>;
 #[derive(Default, Clone)]
 pub struct Storage(Arc<RwLock<ListGroup>>);
 
+#[allow(dead_code)]
 impl Storage {
   pub async fn read(&self) -> RwLockReadGuard<ListGroup> {
     self.0.read().await
@@ -17,7 +18,6 @@ impl Storage {
     self.0.write().await
   }
 
-  #[allow(dead_code)]
   pub fn try_read(&self) -> Option<RwLockReadGuard<ListGroup>> {
     self.0.try_read().ok()
   }
@@ -37,7 +37,6 @@ pub struct ListGroup {
 
 #[allow(dead_code)]
 impl ListGroup {
-  #[deprecated]
   #[inline]
   pub fn get_all_chat(
     &self,
@@ -211,6 +210,7 @@ impl ListGroup {
       .is_some()
   }
 
+  #[inline]
   pub fn has_create_message_id(&self, chat_id: i64, msg_id: i32) -> bool {
     self
       .creating_topics

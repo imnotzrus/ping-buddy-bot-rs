@@ -2,7 +2,6 @@ use teloxide::payloads::SendMessageSetters;
 use teloxide::prelude::Message;
 use teloxide::requests::Requester;
 
-use crate::Bot;
 use crate::constants::{BOT_USERNAME, GENERAL_TOPIC};
 use crate::handler::helper_messages::{
   BotJoinMessage, WelcomeNewMemberMessage,
@@ -11,12 +10,10 @@ use crate::handler::message::{ChatIdExtractImpl, UserRefExtractImpl};
 use crate::handler::topic_buttons;
 use crate::storage::Storage;
 use crate::utils::some_rtn_ok;
+use crate::Bot;
+use crate::Result;
 
-pub async fn handle(
-  bot: Bot,
-  msg: Message,
-  storage: Storage,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn handle(bot: Bot, msg: Message, storage: Storage) -> Result {
   let new_members = some_rtn_ok!(msg.new_chat_members());
   for member in new_members {
     let mut data = storage.write().await;
