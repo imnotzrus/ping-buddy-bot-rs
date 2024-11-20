@@ -1,0 +1,5 @@
+services:
+  ping-buddy:
+    build: .
+    ports:
+      - 4687:4687
