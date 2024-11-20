@@ -28,4 +28,5 @@ RUN apt-get update -y \
     && apt-get clean -y \
     && rm -rf /var/lib/apt/lists/*
 COPY --from=builder /app/target/release/ping-buddy /usr/local/bin
+EXPOSE 4687
 ENTRYPOINT ["/usr/local/bin/ping-buddy"]
