@@ -1,8 +1,8 @@
 use teloxide::prelude::Requester;
 use teloxide::types::{InlineKeyboardButton, InlineKeyboardMarkup, Message};
 
-use crate::Bot;
 use crate::constants::BOT_MSG_TTL;
+use crate::Bot;
 
 const NEW_TOPIC: &str = "new_topic";
 const TOPIC_WRAPPER: char = '#';

@@ -31,23 +31,53 @@ impl AskTopic {
   }
 }
 
-pub struct NoOne;
-impl NoOne {
-  pub fn msg<T>(topic: T) -> String
-  where
-    T: Display,
-  {
-    format!("There is no one in topic `{topic}` yet :\\(")
-  }
+pub enum Return {
+  NoOne(String),
+  NoOneExcept(String),
+  Users(String),
 }
+impl Return {
+  pub fn value(&self) -> &str {
+    match self {
+      Return::NoOne(text) | Return::NoOneExcept(text) | Return::Users(text) => {
+        text.as_str()
+      }
+    }
+  }
 
-pub struct NoOneExcept;
-impl NoOneExcept {
-  pub fn msg<T>(topic: T) -> String
+  pub fn must_remove(&self) -> bool {
+    match self {
+      Return::NoOne(_) | Return::NoOneExcept(_) => true,
+      Return::Users(_) => false,
+    }
+  }
+
+  pub fn no_one<T>(topic: T) -> Self
   where
     T: Display,
   {
-    format!("No one but you subscribed topic `{topic}`")
+    Self::NoOne(format!("There is no one in topic `{topic}` yet :\\("))
+  }
+
+  pub fn no_one_except_sender<T>(topic: T) -> Self
+  where
+    T: Display,
+  {
+    Self::NoOneExcept(format!("No one but you subscribed topic `{topic}`"))
+  }
+
+  pub fn users<L, U>(users: L) -> Self
+  where
+    L: AsRef<[U]>,
+    U: AsRef<str>,
+  {
+    let users = users
+      .as_ref()
+      .iter()
+      .map(AsRef::as_ref)
+      .collect::<Vec<_>>()
+      .join(" ");
+    Self::Users(users)
   }
 }
 

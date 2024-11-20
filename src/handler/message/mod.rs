@@ -1,6 +1,6 @@
 use teloxide::types::{Message, MessageKind, User};
 
-use crate::handler::helper_messages::{NoOne, NoOneExcept};
+use crate::handler::helper_messages::Return;
 use crate::storage::Storage;
 
 pub mod dynamic;
@@ -24,9 +24,7 @@ pub trait TopicExtractImpl {
 
 impl TopicExtractImpl for Message {
   fn topic(&self) -> Option<&str> {
-    let Some(text) = self.text() else {
-      return None;
-    };
+    let text = self.text()?;
     if text.starts_with(MSG_PREFIX) {
       text
         .split_whitespace()
@@ -55,7 +53,7 @@ async fn list_users<T, U>(
   msg: &Message,
   topic: T,
   user: U,
-) -> (String, bool)
+) -> Return
 where
   T: AsRef<str>,
   U: AsRef<str>,
@@ -66,21 +64,20 @@ where
     Some(users) => {
       let users = users.collect::<Vec<_>>();
       if users.is_empty() {
-        (NoOne::msg(topic.as_ref()), true)
+        Return::no_one(topic.as_ref())
       } else {
         let users = users
           .into_iter()
           .filter(|u| *u != user.as_ref())
-          .collect::<Vec<_>>()
-          .join(" ");
+          .collect::<Vec<_>>();
         if users.is_empty() {
-          (NoOneExcept::msg(topic.as_ref()), true)
+          Return::no_one_except_sender(topic.as_ref())
         } else {
-          (users, false)
+          Return::users(users)
         }
       }
     }
-    None => (NoOne::msg(topic.as_ref()), true),
+    None => Return::no_one(topic.as_ref()),
   };
   result
 }

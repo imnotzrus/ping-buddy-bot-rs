@@ -2,37 +2,34 @@ use teloxide::payloads::SendMessageSetters;
 use teloxide::requests::Requester;
 use teloxide::types::{Message, ReplyParameters};
 
-use crate::Bot;
 use crate::handler::helper_messages::{
   InvalidRequest, InvalidTopic, InvalidTopicFormat, UserSubscribedTopic,
 };
 use crate::handler::message::{
-  ChatIdExtractImpl, list_users, TopicExtractImpl, UserRefExtractImpl,
+  list_users, ChatIdExtractImpl, TopicExtractImpl, UserRefExtractImpl,
 };
 use crate::handler::remove_message;
 use crate::storage::Storage;
 use crate::utils::some_rtn_ok;
+use crate::Bot;
+use crate::Result;
 
 fn is_valid_topic(topic: &str) -> bool {
   topic.chars().all(|c| c.is_alphanumeric())
     && topic.as_bytes()[0].is_ascii_alphabetic()
 }
 
-pub async fn handle(
-  bot: Bot,
-  msg: Message,
-  storage: Storage,
-) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+pub async fn handle(bot: Bot, msg: Message, storage: Storage) -> Result {
   match msg.reply_to_message() {
     None => {
       let topic = some_rtn_ok!(msg.topic());
       let user = some_rtn_ok!(msg.from.as_ref().map(|u| u.user_ref()));
-      let (text, have_to_remove) = list_users(storage, &msg, topic, user).await;
+      let ret = list_users(storage, &msg, topic, user).await;
       let msg = bot
-        .send_message(msg.chat.id, text)
+        .send_message(msg.chat.id, ret.value())
         .reply_parameters(ReplyParameters::new(msg.id))
         .await?;
-      if have_to_remove {
+      if ret.must_remove() {
         remove_message(bot, msg);
       }
     }
