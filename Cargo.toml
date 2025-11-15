@@ -8,7 +8,17 @@ name = "ping-buddy"
 path = "src/main.rs"
 
 [dependencies]
-teloxide = { git = "https://github.com/teloxide/teloxide", branch = "master", features = ["macros", "ctrlc_handler", "webhooks-axum"] }
-tokio = { version = "=1.41.0", default-features = false, features = ["macros", "rt-multi-thread"] }
+teloxide = { git = "https://github.com/teloxide/teloxide", branch = "master", features = [
+    "macros",
+    "ctrlc_handler",
+    "webhooks-axum",
+] }
+tokio = { version = "=1.48.0", default-features = false, features = [
+    "macros",
+    "rt-multi-thread",
+] }
 pretty_env_logger = "=0.5.0"
-hashbrown = "=0.15.1"
+hashbrown = "=0.16.0"
+thiserror = "=2.0.17"
+log = "=0.4.28"
+url = "=2.5.7"
