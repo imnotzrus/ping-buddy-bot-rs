@@ -10,15 +10,15 @@ pub struct Storage(Arc<RwLock<ListGroup>>);
 
 #[allow(dead_code)]
 impl Storage {
-  pub async fn read(&self) -> RwLockReadGuard<ListGroup> {
+  pub async fn read(&self) -> RwLockReadGuard<'_, ListGroup> {
     self.0.read().await
   }
 
-  pub async fn write(&self) -> RwLockWriteGuard<ListGroup> {
+  pub async fn write(&self) -> RwLockWriteGuard<'_, ListGroup> {
     self.0.write().await
   }
 
-  pub fn try_read(&self) -> Option<RwLockReadGuard<ListGroup>> {
+  pub fn try_read(&self) -> Option<RwLockReadGuard<'_, ListGroup>> {
     self.0.try_read().ok()
   }
 }
