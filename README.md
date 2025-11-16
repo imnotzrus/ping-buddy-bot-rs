@@ -33,6 +33,7 @@ Set up the following environment variables:
 | `TELOXIDE_TOKEN` | Your Telegram bot token | ✅ Yes |
 | `INBOUND` | Webhook inbound URL (e.g., `https://your-domain.com/webhook`) | ✅ Yes |
 | `OUTBOUND` | Webhook outbound URL (e.g., `https://api.telegram.org`) | ✅ Yes |
+| `DATABASE_PATH` | SQLite database path (e.g., `sqlite:bot_data.db`) | ❌ No (default: `sqlite:bot_data.db`) |
 | `RUST_LOG` | Log level (`debug`, `info`, `warn`, `error`) | ❌ No (default: `info`) |
 
 ### Build and Run
@@ -117,7 +118,7 @@ src/
 
 ### Key Components
 
-- **Storage**: Thread-safe in-memory storage using `RwLock` and `HashMap`
+- **Storage**: Persistent SQLite storage with automatic migrations and thread-safe access
 - **Error Handling**: Custom error types with `thiserror` for better error messages
 - **Validation**: Comprehensive input validation for security
 - **Logging**: Structured logging with different levels for debugging
