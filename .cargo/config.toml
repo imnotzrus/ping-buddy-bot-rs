@@ -1,5 +1,6 @@
 [env]
-TELOXIDE_TOKEN = "7654300172:AAGzz6JXmNyzCbBsk-qTsRtJXP_SSM6GLBg"
+TELOXIDE_TOKEN = "7654300172:AAFW3xYYuGuRT3FDHqLklqmFBaVW7PHcp4A"
 INBOUND = "0.0.0.0:4687"
 OUTBOUND = "https://smee.io/XhYNuoibVe0eddww"
+DATABASE_PATH = "sqlite://data/bot_data.db"
 RUST_LOG = "info"
