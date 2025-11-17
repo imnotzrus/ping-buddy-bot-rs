@@ -15,11 +15,13 @@ use crate::constants::{
   GENERAL_TOPIC, MAX_SUBSCRIBERS_PER_TOPIC, MAX_TOPICS_PER_CHAT,
 };
 use crate::error::{BotError, Result};
+use crate::storage::cache::SubscriptionCache;
 use crate::storage::r#trait::{StorageBackend, StorageStats};
 
-/// SQLite-based storage backend
+/// SQLite-based storage backend with in-memory cache
 pub struct SqliteStorage {
   pool: SqlitePool,
+  cache: SubscriptionCache,
 }
 
 impl SqliteStorage {
@@ -58,9 +60,25 @@ impl SqliteStorage {
         BotError::Config(format!("Failed to run migrations: {}", e))
       })?;
 
+    // Initialize cache
+    let cache = SubscriptionCache::new();
+
+    // Warm cache from database
+    log::info!("Warming cache from database...");
+    let subscriptions: Vec<(i64, String, String)> = sqlx::query_as(
+      "SELECT chat_id, topic, user_id FROM subscriptions ORDER BY chat_id, topic",
+    )
+    .fetch_all(&pool)
+    .await
+    .map_err(|e| {
+      BotError::Config(format!("Failed to load subscriptions for cache: {}", e))
+    })?;
+
+    cache.warm_from_db(subscriptions).await;
+
     log::info!("SQLite storage initialized successfully");
 
-    Ok(Self { pool })
+    Ok(Self { pool, cache })
   }
 
   /// Check topic count limit for a chat
@@ -133,50 +151,38 @@ impl SqliteStorage {
 #[async_trait]
 impl StorageBackend for SqliteStorage {
   async fn get_topics(&self, chat_id: i64) -> Result<Option<Vec<String>>> {
-    let topics: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT topic FROM subscriptions WHERE chat_id = ? ORDER BY topic"
-        )
-        .bind(chat_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| BotError::Storage {
-            chat_id,
-            message: format!("Failed to fetch topics: {}", e),
-        })?;
+    // Read from cache
+    let topics = self.cache.get_topics(chat_id).await;
 
     // Ensure the "general" topic has a __SYSTEM__ sentinel for persistence
     // This handles existing chats that were created before the sentinel system
-    if topics.contains(&GENERAL_TOPIC.to_string()) {
-      let has_sentinel: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM subscriptions WHERE chat_id = ? AND topic = ? AND user_id = '__SYSTEM__')",
-      )
-      .bind(chat_id)
-      .bind(GENERAL_TOPIC)
-      .fetch_one(&self.pool)
-      .await
-      .map_err(|e| BotError::Storage {
-        chat_id,
-        message: format!("Failed to check sentinel existence: {}", e),
-      })?;
+    if let Some(ref topic_list) = topics {
+      if topic_list.contains(&GENERAL_TOPIC.to_string()) {
+        let has_sentinel = self
+          .cache
+          .is_subscriber_in_topic(chat_id, "__SYSTEM__", GENERAL_TOPIC)
+          .await;
 
-      // If general topic exists but has no sentinel, add it
-      if !has_sentinel {
-        let _ = sqlx::query(
-          "INSERT OR IGNORE INTO subscriptions (chat_id, topic, user_id) VALUES (?, ?, ?)"
-        )
-        .bind(chat_id)
-        .bind(GENERAL_TOPIC)
-        .bind("__SYSTEM__")
-        .execute(&self.pool)
-        .await;
+        // If general topic exists but has no sentinel, add it to both DB and cache
+        if !has_sentinel {
+          let _ = sqlx::query(
+            "INSERT OR IGNORE INTO subscriptions (chat_id, topic, user_id) VALUES (?, ?, ?)"
+          )
+          .bind(chat_id)
+          .bind(GENERAL_TOPIC)
+          .bind("__SYSTEM__")
+          .execute(&self.pool)
+          .await;
+
+          self
+            .cache
+            .add_subscription(chat_id, GENERAL_TOPIC, "__SYSTEM__")
+            .await;
+        }
       }
     }
 
-    Ok(if topics.is_empty() {
-      None
-    } else {
-      Some(topics)
-    })
+    Ok(topics)
   }
 
   async fn get_subscribers(&self, chat_id: i64) -> Result<Option<Vec<String>>> {
@@ -203,23 +209,20 @@ impl StorageBackend for SqliteStorage {
     chat_id: i64,
     topic: &str,
   ) -> Result<Option<Vec<String>>> {
-    let subscribers: Vec<String> = sqlx::query_scalar(
-            "SELECT user_id FROM subscriptions WHERE chat_id = ? AND topic = ? AND user_id != '__SYSTEM__' ORDER BY user_id"
-        )
-        .bind(chat_id)
-        .bind(topic)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| BotError::Storage {
-            chat_id,
-            message: format!("Failed to fetch subscribers for topic '{}': {}", topic, e),
-        })?;
+    // Read from cache and filter out __SYSTEM__
+    let subscribers = self
+      .cache
+      .get_subscribers_from_topic(chat_id, topic)
+      .await
+      .map(|users| {
+        users
+          .into_iter()
+          .filter(|u| u != "__SYSTEM__")
+          .collect::<Vec<_>>()
+      })
+      .and_then(|users| if users.is_empty() { None } else { Some(users) });
 
-    Ok(if subscribers.is_empty() {
-      None
-    } else {
-      Some(subscribers)
-    })
+    Ok(subscribers)
   }
 
   async fn get_topics_from_subscriber(
@@ -227,23 +230,8 @@ impl StorageBackend for SqliteStorage {
     chat_id: i64,
     user_id: &str,
   ) -> Result<Option<Vec<String>>> {
-    let topics: Vec<String> = sqlx::query_scalar(
-            "SELECT topic FROM subscriptions WHERE chat_id = ? AND user_id = ? ORDER BY topic"
-        )
-        .bind(chat_id)
-        .bind(user_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| BotError::Storage {
-            chat_id,
-            message: format!("Failed to fetch topics for user '{}': {}", user_id, e),
-        })?;
-
-    Ok(if topics.is_empty() {
-      None
-    } else {
-      Some(topics)
-    })
+    // Read from cache
+    Ok(self.cache.get_topics_from_subscriber(chat_id, user_id).await)
   }
 
   async fn does_group_have_topic(
@@ -251,19 +239,8 @@ impl StorageBackend for SqliteStorage {
     chat_id: i64,
     topic: &str,
   ) -> Result<bool> {
-    let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM subscriptions WHERE chat_id = ? AND topic = ?)"
-        )
-        .bind(chat_id)
-        .bind(topic)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| BotError::Storage {
-            chat_id,
-            message: format!("Failed to check topic existence: {}", e),
-        })?;
-
-    Ok(exists)
+    // Read from cache
+    Ok(self.cache.does_group_have_topic(chat_id, topic).await)
   }
 
   async fn is_subscriber_in_topic(
@@ -272,20 +249,13 @@ impl StorageBackend for SqliteStorage {
     user_id: &str,
     topic: &str,
   ) -> Result<bool> {
-    let exists: bool = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM subscriptions WHERE chat_id = ? AND topic = ? AND user_id = ?)"
-        )
-        .bind(chat_id)
-        .bind(topic)
-        .bind(user_id)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| BotError::Storage {
-            chat_id,
-            message: format!("Failed to check subscription: {}", e),
-        })?;
-
-    Ok(exists)
+    // Read from cache
+    Ok(
+      self
+        .cache
+        .is_subscriber_in_topic(chat_id, user_id, topic)
+        .await,
+    )
   }
 
   async fn set_topic_and_subscribers(
@@ -344,6 +314,16 @@ impl StorageBackend for SqliteStorage {
       chat_id,
       message: format!("Failed to commit transaction: {}", e),
     })?;
+
+    // Update cache after successful DB write
+    if topic == GENERAL_TOPIC && users.is_empty() {
+      self
+        .cache
+        .add_subscription(chat_id, topic, "__SYSTEM__")
+        .await;
+    } else {
+      self.cache.add_subscriptions(chat_id, topic, users).await;
+    }
 
     Ok(())
   }
@@ -408,6 +388,14 @@ impl StorageBackend for SqliteStorage {
       chat_id,
       message: format!("Failed to commit transaction: {}", e),
     })?;
+
+    // Update cache after successful DB write
+    if result.rows_affected() > 0 {
+      self
+        .cache
+        .remove_subscription(chat_id, topic, user_id)
+        .await;
+    }
 
     Ok(())
   }

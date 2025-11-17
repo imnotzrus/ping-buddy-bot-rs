@@ -16,6 +16,7 @@
 //! Storage is initialized internally by the bot and accessed through
 //! dependency injection in handlers.
 
+pub mod cache;
 pub mod sqlite;
 pub mod r#trait;
 
