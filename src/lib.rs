@@ -34,59 +34,65 @@ pub fn setup_logger() {
 }
 
 pub async fn spin_up() -> Result {
-    log::info!("Starting Ping Buddy Bot...");
-    
-    let env = Env::init()?;
+  log::info!("Starting Ping Buddy Bot...");
 
-    let bot = TBot::from_env().parse_mode(ParseMode::MarkdownV2);
+  let env = Env::init()?;
 
-    log::info!("Setting up webhook listener...");
-    let options = webhooks::Options::new(
-        env.inbound
-            .as_str()
-            .parse()
-            .map_err(|e| BotError::AddrParse(format!("{}", e)))?,
-        env.outbound
-            .as_str()
-            .parse()
-            .map_err(|e| BotError::AddrParse(format!("{}", e)))?,
+  let bot = TBot::from_env().parse_mode(ParseMode::MarkdownV2);
+
+  // Extract socket address from inbound URL
+  let inbound_host = env.inbound.host_str().ok_or_else(|| {
+    BotError::Config("INBOUND URL must have a host".to_string())
+  })?;
+  let inbound_port = env.inbound.port().ok_or_else(|| {
+    BotError::Config("INBOUND URL must have a port".to_string())
+  })?;
+  let inbound_addr = format!("{}:{}", inbound_host, inbound_port)
+    .parse()
+    .map_err(|e| {
+      BotError::AddrParse(format!("inbound socket address: {}", e))
+    })?;
+
+  let options = webhooks::Options::new(inbound_addr, env.outbound.clone());
+
+  let listener =
+    webhooks::axum(Clone::clone(&bot), options)
+      .await
+      .map_err(|e| {
+        BotError::Config(format!("Failed to build webhook listener: {}", e))
+      })?;
+
+  let storage = Storage::default();
+
+  log::info!("Building message handler...");
+  let handler = dptree::entry()
+    .branch(
+      Update::filter_message()
+        .branch(
+          dptree::entry()
+            .filter_command::<Command>()
+            .endpoint(handler::message::r#static::handle),
+        )
+        .branch(dptree::entry().endpoint(handler::message::dynamic::handle)),
+    )
+    .branch(
+      Update::filter_callback_query().endpoint(handler::callback::handle),
     );
-    
-    let listener = webhooks::axum(Clone::clone(&bot), options)
-        .await
-        .map_err(|e| BotError::Config(format!("Failed to build webhook listener: {}", e)))?;
 
-    let storage = Storage::default();
-    
-    log::info!("Building message handler...");
-    let handler = dptree::entry()
-        .branch(
-            Update::filter_message()
-                .branch(
-                    dptree::entry()
-                        .filter_command::<Command>()
-                        .endpoint(handler::message::r#static::handle),
-                )
-                .branch(dptree::entry().endpoint(handler::message::dynamic::handle)),
-        )
-        .branch(
-            Update::filter_callback_query().endpoint(handler::callback::handle),
-        );
+  log::info!("Bot is ready and listening for updates");
 
-    log::info!("Bot is ready and listening for updates");
-    
-    Dispatcher::builder(bot, handler)
-        .dependencies(dptree::deps![storage])
-        .enable_ctrlc_handler()
-        .build()
-        .dispatch_with_listener(
-            listener,
-            Arc::new(|err| async move {
-                log::error!("Dispatcher error: {:?}", err);
-            }),
-        )
-        .await;
-    
-    log::info!("Bot shutting down");
-    Ok(())
+  Dispatcher::builder(bot, handler)
+    .dependencies(dptree::deps![storage])
+    .enable_ctrlc_handler()
+    .build()
+    .dispatch_with_listener(
+      listener,
+      Arc::new(|err| async move {
+        log::error!("Dispatcher error: {:?}", err);
+      }),
+    )
+    .await;
+
+  log::info!("Bot shutting down");
+  Ok(())
 }
