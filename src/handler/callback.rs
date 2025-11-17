@@ -5,7 +5,6 @@
 
 use teloxide::payloads::{
   AnswerCallbackQuerySetters, EditMessageReplyMarkupSetters,
-  EditMessageTextSetters,
 };
 use teloxide::requests::Requester;
 use teloxide::types::CallbackQuery;
@@ -50,11 +49,6 @@ pub async fn handle(
   match topic.as_str() {
     NEW_TOPIC_CALLBACK => {
       // Handle "Create New Topic" button
-      log::debug!(
-        "User {} initiated topic creation in chat {}",
-        user,
-        msg.cid()
-      );
       bot.answer_callback_query(&query.id).await?;
       let response = bot
         .send_message(msg.chat.id, Messages::ask_topic(&user))
@@ -88,13 +82,6 @@ pub async fn handle(
           bot.answer_callback_query(&query.id).await?;
           return Ok(());
         }
-        log::info!(
-          "User {} unsubscribed from topic '{}' in chat {}",
-          user,
-          topic,
-          msg.cid()
-        );
-        // Acknowledge with feedback
         bot
           .answer_callback_query(&query.id)
           .text(format!("Unsubscribed from {}", topic))
@@ -117,76 +104,30 @@ pub async fn handle(
             .await?;
           return Ok(());
         }
-        log::info!(
-          "User {} subscribed to topic '{}' in chat {}",
-          user,
-          topic,
-          msg.cid()
-        );
-        // Acknowledge with feedback
         bot
           .answer_callback_query(&query.id)
           .text(format!("Subscribed to {}", topic))
           .await?;
       }
 
-      // Release the write lock before reading updated data
-      drop(data);
-
-      // Re-acquire read lock to get fresh data
-      let data = storage.read().await;
-
-      // Update the inline keyboard to reflect new subscription state
-      let all_topics = some_rtn_ok!(data.get_topics(msg.cid()).await?);
+      let all_topics = data.get_topics(msg.cid()).await?.unwrap_or_default();
       let subscriptions = data
         .get_topics_from_subscriber(msg.cid(), &user)
-        .await?
+        .await
+        .ok()
+        .flatten()
         .unwrap_or_default();
-
-      log::debug!(
-        "After toggle - All topics: {:?}, User subscriptions: {:?}",
-        all_topics,
-        subscriptions
-      );
-
-      let modified_topics: Vec<_> = all_topics
+      let modified_topics = all_topics
         .iter()
-        .map(|t| {
-          let is_subscribed = subscriptions.contains(t);
-          log::debug!("Topic '{}' subscription status: {}", t, is_subscribed);
-          (t.as_str(), is_subscribed)
-        })
-        .collect();
-
-      // Try to edit message text with keyboard to force UI update
-      let message_text = msg.text().unwrap_or("Your subscriptions");
-      let keyboard = build_topic_buttons(&modified_topics, true);
-      let edit_result = bot
-        .edit_message_text(msg.chat.id, msg.id, message_text)
-        .reply_markup(keyboard.clone())
+        .map(|t| (t, subscriptions.contains(&t)))
+        .collect::<Vec<_>>();
+      _ = bot
+        .edit_message_reply_markup(msg.chat.id, msg.id)
+        .reply_markup(build_topic_buttons(modified_topics, true))
         .await;
-
-      // If text edit fails (e.g., text unchanged), try just editing markup
-      if let Err(e) = edit_result {
-        log::debug!("Text edit failed, trying markup only: {}", e);
-        if let Err(e2) = bot
-          .edit_message_reply_markup(msg.chat.id, msg.id)
-          .reply_markup(keyboard)
-          .await
-        {
-          log::warn!("Failed to update keyboard: {}", e2);
-        }
-      }
     }
     topic => {
       // Handle direct topic subscription (from welcome message)
-      log::debug!(
-        "User {} subscribing to topic '{}' in chat {}",
-        user,
-        topic,
-        msg.cid()
-      );
-
       let user_slice = &[user.as_str()];
       if let Err(e) = data
         .set_topic_and_subscribers(msg.cid(), topic, user_slice)

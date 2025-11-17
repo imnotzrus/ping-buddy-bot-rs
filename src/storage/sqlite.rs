@@ -11,7 +11,9 @@ use async_trait::async_trait;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::str::FromStr;
 
-use crate::constants::{MAX_SUBSCRIBERS_PER_TOPIC, MAX_TOPICS_PER_CHAT};
+use crate::constants::{
+  GENERAL_TOPIC, MAX_SUBSCRIBERS_PER_TOPIC, MAX_TOPICS_PER_CHAT,
+};
 use crate::error::{BotError, Result};
 use crate::storage::r#trait::{StorageBackend, StorageStats};
 
@@ -104,8 +106,9 @@ impl SqliteStorage {
     topic: &str,
     new_users_count: usize,
   ) -> Result<()> {
+    // Exclude __SYSTEM__ sentinel from subscriber count
     let count: i64 = sqlx::query_scalar(
-      "SELECT COUNT(*) FROM subscriptions WHERE chat_id = ? AND topic = ?",
+      "SELECT COUNT(*) FROM subscriptions WHERE chat_id = ? AND topic = ? AND user_id != '__SYSTEM__'",
     )
     .bind(chat_id)
     .bind(topic)
@@ -141,6 +144,34 @@ impl StorageBackend for SqliteStorage {
             message: format!("Failed to fetch topics: {}", e),
         })?;
 
+    // Ensure the "general" topic has a __SYSTEM__ sentinel for persistence
+    // This handles existing chats that were created before the sentinel system
+    if topics.contains(&GENERAL_TOPIC.to_string()) {
+      let has_sentinel: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM subscriptions WHERE chat_id = ? AND topic = ? AND user_id = '__SYSTEM__')",
+      )
+      .bind(chat_id)
+      .bind(GENERAL_TOPIC)
+      .fetch_one(&self.pool)
+      .await
+      .map_err(|e| BotError::Storage {
+        chat_id,
+        message: format!("Failed to check sentinel existence: {}", e),
+      })?;
+
+      // If general topic exists but has no sentinel, add it
+      if !has_sentinel {
+        let _ = sqlx::query(
+          "INSERT OR IGNORE INTO subscriptions (chat_id, topic, user_id) VALUES (?, ?, ?)"
+        )
+        .bind(chat_id)
+        .bind(GENERAL_TOPIC)
+        .bind("__SYSTEM__")
+        .execute(&self.pool)
+        .await;
+      }
+    }
+
     Ok(if topics.is_empty() {
       None
     } else {
@@ -150,7 +181,7 @@ impl StorageBackend for SqliteStorage {
 
   async fn get_subscribers(&self, chat_id: i64) -> Result<Option<Vec<String>>> {
     let subscribers: Vec<String> = sqlx::query_scalar(
-            "SELECT DISTINCT user_id FROM subscriptions WHERE chat_id = ? ORDER BY user_id"
+            "SELECT DISTINCT user_id FROM subscriptions WHERE chat_id = ? AND user_id != '__SYSTEM__' ORDER BY user_id"
         )
         .bind(chat_id)
         .fetch_all(&self.pool)
@@ -173,7 +204,7 @@ impl StorageBackend for SqliteStorage {
     topic: &str,
   ) -> Result<Option<Vec<String>>> {
     let subscribers: Vec<String> = sqlx::query_scalar(
-            "SELECT user_id FROM subscriptions WHERE chat_id = ? AND topic = ? ORDER BY user_id"
+            "SELECT user_id FROM subscriptions WHERE chat_id = ? AND topic = ? AND user_id != '__SYSTEM__' ORDER BY user_id"
         )
         .bind(chat_id)
         .bind(topic)
@@ -275,20 +306,37 @@ impl StorageBackend for SqliteStorage {
       message: format!("Failed to start transaction: {}", e),
     })?;
 
-    // Insert subscriptions (ignore duplicates)
-    for user in users {
+    // Special handling for "general" topic with no subscribers
+    // We insert a placeholder entry to ensure the topic exists in the database
+    if topic == GENERAL_TOPIC && users.is_empty() {
       sqlx::query(
-                "INSERT OR IGNORE INTO subscriptions (chat_id, topic, user_id) VALUES (?, ?, ?)"
-            )
-            .bind(chat_id)
-            .bind(topic)
-            .bind(user)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| BotError::Storage {
-                chat_id,
-                message: format!("Failed to insert subscription: {}", e),
-            })?;
+        "INSERT OR IGNORE INTO subscriptions (chat_id, topic, user_id) VALUES (?, ?, ?)"
+      )
+      .bind(chat_id)
+      .bind(topic)
+      .bind("__SYSTEM__") // Sentinel value to mark general topic exists
+      .execute(&mut *tx)
+      .await
+      .map_err(|e| BotError::Storage {
+        chat_id,
+        message: format!("Failed to initialize general topic: {}", e),
+      })?;
+    } else {
+      // Insert subscriptions (ignore duplicates)
+      for user in users {
+        sqlx::query(
+          "INSERT OR IGNORE INTO subscriptions (chat_id, topic, user_id) VALUES (?, ?, ?)"
+        )
+        .bind(chat_id)
+        .bind(topic)
+        .bind(user)
+        .execute(&mut *tx)
+        .await
+        .map_err(|e| BotError::Storage {
+          chat_id,
+          message: format!("Failed to insert subscription: {}", e),
+        })?;
+      }
     }
 
     // Commit transaction
@@ -296,13 +344,6 @@ impl StorageBackend for SqliteStorage {
       chat_id,
       message: format!("Failed to commit transaction: {}", e),
     })?;
-
-    log::info!(
-      "Added {} users to topic '{}' in chat {}",
-      users.len(),
-      topic,
-      chat_id
-    );
 
     Ok(())
   }
@@ -313,13 +354,20 @@ impl StorageBackend for SqliteStorage {
     topic: &str,
     user_id: &str,
   ) -> Result<()> {
+    // Start transaction to ensure atomicity
+    let mut tx = self.pool.begin().await.map_err(|e| BotError::Storage {
+      chat_id,
+      message: format!("Failed to start transaction: {}", e),
+    })?;
+
+    // Remove the subscription (but never remove __SYSTEM__ sentinel)
     let result = sqlx::query(
-            "DELETE FROM subscriptions WHERE chat_id = ? AND topic = ? AND user_id = ?"
+            "DELETE FROM subscriptions WHERE chat_id = ? AND topic = ? AND user_id = ? AND user_id != '__SYSTEM__'"
         )
         .bind(chat_id)
         .bind(topic)
         .bind(user_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| BotError::Storage {
             chat_id,
@@ -327,13 +375,39 @@ impl StorageBackend for SqliteStorage {
         })?;
 
     if result.rows_affected() > 0 {
-      log::info!(
-        "Removed user '{}' from topic '{}' in chat {}",
-        user_id,
-        topic,
-        chat_id
-      );
+      // Check if there are any remaining real subscribers for this topic
+      // Skip this check for the "general" topic - it should never be deleted
+      // Also exclude __SYSTEM__ from the count as it's just a placeholder
+      if topic != GENERAL_TOPIC {
+        let remaining_count: i64 = sqlx::query_scalar(
+          "SELECT COUNT(*) FROM subscriptions WHERE chat_id = ? AND topic = ? AND user_id != '__SYSTEM__'",
+        )
+        .bind(chat_id)
+        .bind(topic)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(|e| BotError::Storage {
+          chat_id,
+          message: format!("Failed to count remaining subscribers: {}", e),
+        })?;
+
+        // If no real subscribers remain, the topic is automatically removed
+        // (no explicit DELETE needed since the table only contains subscriptions)
+        if remaining_count == 0 {
+          log::debug!(
+            "Topic '{}' in chat {} has no remaining subscribers",
+            topic,
+            chat_id
+          );
+        }
+      }
     }
+
+    // Commit transaction
+    tx.commit().await.map_err(|e| BotError::Storage {
+      chat_id,
+      message: format!("Failed to commit transaction: {}", e),
+    })?;
 
     Ok(())
   }
@@ -450,14 +524,16 @@ impl StorageBackend for SqliteStorage {
       message: format!("Failed to get topic count: {}", e),
     })?;
 
-    let total_subscriptions: i64 =
-      sqlx::query_scalar("SELECT COUNT(*) FROM subscriptions")
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| BotError::Storage {
-          chat_id: 0,
-          message: format!("Failed to get subscription count: {}", e),
-        })?;
+    // Exclude __SYSTEM__ sentinel from subscription count
+    let total_subscriptions: i64 = sqlx::query_scalar(
+      "SELECT COUNT(*) FROM subscriptions WHERE user_id != '__SYSTEM__'",
+    )
+    .fetch_one(&self.pool)
+    .await
+    .map_err(|e| BotError::Storage {
+      chat_id: 0,
+      message: format!("Failed to get subscription count: {}", e),
+    })?;
 
     let pending_requests: i64 =
       sqlx::query_scalar("SELECT COUNT(*) FROM pending_topic_creation")

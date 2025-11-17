@@ -20,13 +20,6 @@ pub async fn handle(bot: Bot, msg: Message, storage: Storage) -> Result {
       let topic = some_rtn_ok!(msg.topic());
       let user = some_rtn_ok!(msg.from.as_ref().map(|u| u.user_ref()));
 
-      log::debug!(
-        "User {} pinging topic '{}' in chat {}",
-        user,
-        topic,
-        msg.cid()
-      );
-
       let response = list_users(storage, &msg, topic, user).await?;
       let response_msg = bot
         .send_message(msg.chat.id, response.text())
@@ -56,10 +49,7 @@ pub async fn handle(bot: Bot, msg: Message, storage: Storage) -> Result {
         if let Err(validation_err) = validate_topic(topic) {
           log::warn!("Invalid topic name '{}': {}", topic, validation_err);
           bot
-            .send_message(
-              msg.chat.id,
-              Messages::invalid_topic(validation_err.to_string()),
-            )
+            .send_message(msg.chat.id, Messages::invalid_topic(topic))
             .await?;
           return Ok(());
         }
