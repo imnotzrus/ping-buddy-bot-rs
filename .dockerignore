@@ -3,5 +3,6 @@ target/
 .gitignore
 .dockerignore
 .rustfmt.toml
+*.db*
 LICENSE
 README.md

@@ -22,3 +22,5 @@ hashbrown = "=0.16.0"
 thiserror = "=2.0.17"
 log = "=0.4.28"
 url = "=2.5.7"
+sqlx = { version = "=0.8.2", features = ["runtime-tokio", "sqlite"] }
+async-trait = "=0.1.83"

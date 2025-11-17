@@ -21,3 +21,5 @@ Cargo.lock
 .idea/
 
 .cargo/
+data/
+*.db*
